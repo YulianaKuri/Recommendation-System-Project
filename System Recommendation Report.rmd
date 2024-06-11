@@ -1,0 +1,905 @@
+
+---
+title: "System Recommendation Movie"
+author: "Yuliana Naddaf"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+#### The following project presents a detailed analysis of the performance of various movie recommendation models using the MovieLens 10M dataset.
+
+##### **Linear Regression Model (Mean Baseline):**
+
+##### * The average of the scores in the training set is calculated.
+##### * Predictions are made using this average for the validation set.
+##### * The model is evaluated using metrics such as MAE, MSE and RMSE.
+##### * This approach establishes a baseline for comparing other more complex models.
+
+##### **Linear Regression Model with Film Bias:**
+
+##### * The bias is calculated for each movie in the training set.
+##### * This bias is incorporated into a linear regression model to make predictions.
+##### * The model is evaluated using the same evaluation metrics.
+
+##### **Linear Regression Model with Movie and User Bias:**
+
+##### * The bias is calculated for both movies and users in the training set.
+##### * These biases are incorporated into a linear regression model to make predictions.
+##### * The model is evaluated using the same evaluation metrics.
+
+##### **Linear Regression Model with Regularized Bias:**
+
+##### * The code begins by installing and loading the necessary libraries. It then defines three primary functions: compute_biases, predict_ratings, and evaluate_model. The compute_biases function calculates the average rating and biases for movies and users, returning these values in a list. The predict_ratings function uses these biases to predict ratings for the validation dataset. The evaluate_model function integrates these two functions, computing the biases and using them to predict ratings, ultimately calculating and returning the RMSE.
+
+##### * In the main execution block, the structure and missing values of the training and validacion datasets are checked. A range of lambda values is defined, and for each lambda, the RMSE is calculated using the evaluate_model function. The lambda with the lowest RMSE is selected as the best lambda. Final biases are computed using this best lambda, and these biases are then used to predict ratings for the validation dataset. The model is evaluated by calculating MAE, MSE, and RMSE, and the results are printed.
+
+##### * Overall, the code efficiently implements a regularization model by iteratively finding the best lambda, computing biases, predicting ratings, and evaluating the model’s performance.
+
+##### **Factorization Matrix:**
+
+##### * The training and test sets are converted into a format compatible with the factorization matrix.
+##### * The factorization matrix is used to make predictions.
+##### * The model is evaluated using the same evaluation metrics.
+
+##### Each model is evaluated on both the validation set and the final test set (final_holdout_test). The evaluation results are compiled in a table that shows the MAE, MSE, and RMSE metrics for each model in both data sets. This approach allows the performance of different movie recommendation models to be compared in terms of predictive accuracy.
+
+##### In conclusion the results show that more advanced models, such as those that incorporate both movie and user biases, along with regularization or matrix factorization, significantly outperform the simple baseline model that uses only the average of the ratings. These advanced models achieve significant reductions in Mean Absolute Error (MAE), Mean Squared Error (MSE), and Root Mean Squared Error (RMSE) compared to the base model, indicating an improvement in recommendation accuracy. of movies. 
+
+##### Furthermore, matrix factorization emerges as the most effective technique, with the lowest values of MAE, MSE, and RMSE in both data sets, suggesting that it more accurately captures the complex interactions between users and movies in the data set. MovieLens 10M.
+
+##### In summary, the results suggest that more complex models, which consider both movie and user bias, along with regularization or matrix factorization, tend to provide better movie recommendation accuracy compared to a simple baseline approach.
+
+```{r}
+
+options(repos = c(CRAN = "https://cloud.r-project.org/"))
+
+# Create edx and final_holdout_test sets
+##########################################################
+
+# Note: this process could take a couple of minutes
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+install.packages("tibble")
+install.packages("stringr")
+
+library(stringr)
+library(tidyverse)
+library(caret)
+library(tibble)
+
+
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+options(timeout = 120)
+
+dl <- "ml-10M100K.zip"
+if(!file.exists(dl))
+  download.file("https://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings_file <- "ml-10M100K/ratings.dat"
+if(!file.exists(ratings_file))
+  unzip(dl, ratings_file)
+
+movies_file <- "ml-10M100K/movies.dat"
+if(!file.exists(movies_file))
+  unzip(dl, movies_file)
+
+
+ratings <- as.data.frame(str_split(read_lines(ratings_file), fixed("::"), simplify = TRUE),
+                         stringsAsFactors = FALSE)
+colnames(ratings) <- c("userId", "movieId", "rating", "timestamp")
+ratings <- ratings %>%
+  mutate(userId = as.integer(userId),
+         movieId = as.integer(movieId),
+         rating = as.numeric(rating),
+         timestamp = as.integer(timestamp))
+
+head(ratings)
+
+movies <- as.data.frame(str_split(read_lines(movies_file), fixed("::"), simplify = TRUE),
+                        stringsAsFactors = FALSE)
+colnames(movies) <- c("movieId", "title", "genres")
+movies <- movies %>%
+  mutate(movieId = as.integer(movieId))
+
+head(movies)
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+head(movielens)
+
+# Final hold-out test set will be 10% of MovieLens data
+set.seed(1)
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in final hold-out test set are also in edx set
+final_holdout_test <- temp %>%
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+
+head(final_holdout_test)
+
+# Add rows removed from final hold-out test set back into edx set
+removed <- anti_join(temp, final_holdout_test)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+
+
+```
+
+```{r}
+
+# splits the dataset edx into two parts: a training set that contains 80% of the data and
+# a validation set that contains the remaining 20%.
+
+set.seed(1)
+train_index <- createDataPartition(y = edx$rating, times = 1, p = 0.8, list = FALSE)
+training <- edx[train_index,]
+validacion <- edx[-train_index,]
+
+
+# LINEAR REGRESION MODEL
+# Mean Baseline
+# Baseline model predicts the average of the ratings from the training set for all data in the
+# validation set, evaluates its performance using various metrics, and stores and displays the 
+# results.
+
+install.packages("Metrics")
+library(Metrics)
+
+# Calculate the average of the ratings in the training set
+mean_rating <- mean(training$rating)
+
+# Create a prediction vector using the calculated average
+predictions <- rep(mean_rating, nrow(validacion))
+
+# Evaluate the model and store the results in a tibble
+valuation <- tibble(
+  Models = "Mean baseline model (validation)",
+  MAE = mae(validacion$rating, predictions),
+  MSE = mse(validacion$rating, predictions),
+  RMSE = rmse(validacion$rating, predictions)
+)
+
+# Print the evaluations
+print(valuation)
+
+
+# Final Evaluation with the final_holdout_test
+# Calculate the average of the ratings in the full dataset
+mean_rating <- mean(edx$rating)
+
+# Create a prediction vector using the calculated average
+predictions <- rep(mean_rating, nrow(final_holdout_test))
+
+# Evaluate the model and store the results in a data frame
+valuation <- data.frame(
+  Models = "Mean baseline model (final_holdout_test)",
+  MAE = mae(final_holdout_test$rating, predictions),
+  MSE = mse(final_holdout_test$rating, predictions),
+  RMSE = rmse(final_holdout_test$rating, predictions),
+  stringsAsFactors = FALSE
+)
+
+# Print the evaluations
+print(valuation)
+
+
+```
+```{r}
+
+# MOVIE BIAS  Caracteristica efect s_movie
+# Bias per movie 
+# The code calculates a rating prediction model that incorporates the bias of each movie 
+# and evaluates its performance using error metrics.
+
+# Calculate the bias for each movie
+bias_movie <- training %>%
+  group_by(movieId) %>%
+  summarize(s_movie = mean(rating - mean_rating),
+            s_movie_isolated = mean(rating))
+
+# Show the first 20 rows of the movie biases
+head(bias_movie, 20)
+
+# Build the linear model (mean + bias movie)
+predicted_ratings <- validacion %>%
+  left_join(bias_movie, by = "movieId") %>%
+  mutate(prediction = mean_rating + s_movie)
+
+# Replace NA with the average value
+predicted_ratings$prediction[is.na(predicted_ratings$prediction)] <- mean_rating
+
+# Evaluate the model and store the results in a table
+valuation <- bind_rows(valuation,
+             tibble(Models = "Model linear mean + s_movie (validacion)",
+             MAE = mae(validacion$rating, predicted_ratings$prediction),
+             MSE = mse(validacion$rating, predicted_ratings$prediction),
+             RMSE = rmse(validacion$rating, predicted_ratings$prediction)))
+
+# Print the evaluations
+print(valuation)
+
+
+# Final Evaluation with the final_holdout_test
+# Calculate the bias for each movie
+bias_movie <- edx %>%
+  group_by(movieId) %>%
+  summarize(s_movie = mean(rating - mean_rating),
+            s_movie_isolated = mean(rating))
+
+# Show the first 20 rows of the movie biases
+head(bias_movie, 20)
+
+# Construct the linear model (mean + movie bias)
+predicted_ratings <- final_holdout_test %>%
+  left_join(bias_movie, by = "movieId") %>%
+  mutate(prediction = mean_rating + s_movie)
+
+# Replace NA with the average value
+predicted_ratings$prediction[is.na(predicted_ratings$prediction)] <- mean_rating
+
+# Evaluate the model and store the results in a table
+valuation <- bind_rows(valuation, 
+                       tibble(Models = "Model linear mean + s_movie (final_holdout_test)",
+                       MAE = mae(final_holdout_test$rating, predicted_ratings$prediction),
+                       MSE = mse(final_holdout_test$rating, predicted_ratings$prediction),
+                       RMSE = rmse(final_holdout_test$rating, predicted_ratings$prediction)))
+
+# Print the evaluations
+print(valuation)
+
+
+# Bias per user
+# The code calculates a rating prediction model that incorporates both movie and user biases, 
+# evaluates its performance using error metrics, and updates the evaluation results.
+# Calculate the bias of each user
+
+bias_user <- training %>%
+  left_join(bias_movie, by = 'movieId') %>%
+  group_by(userId) %>%
+  summarize(s_usuario = mean(rating - mean_rating - s_movie),
+            s_usuario_isolated = mean(rating))
+
+# Show the first 20 rows of user biases
+head(bias_user, 20)
+
+# Build the linear model (mean + bias of movie  + bias of user)
+predicted_ratings_with2bias <- validacion %>%
+  left_join(bias_movie, by = 'movieId') %>%
+  left_join(bias_user, by = 'userId') %>%
+  mutate(prediction = mean_rating + s_movie + s_usuario)
+
+# Replace NA with the average value
+predicted_ratings_with2bias$prediction[is.na(predicted_ratings_with2bias$prediction)] <- mean_rating
+
+
+# Evaluate the model and store the results in a tibble
+valuation <- bind_rows(valuation,
+                       tibble(Models = "Model linear mean/s_movie/s_usuario (validation)",
+                       MAE = mae(validacion$rating, predicted_ratings_with2bias$prediction),
+                       MSE = mse(validacion$rating, predicted_ratings_with2bias$prediction),
+                       RMSE = rmse(validacion$rating, predicted_ratings_with2bias$prediction)))
+
+# Print the evaluations
+print(valuation)
+
+
+# Final Evaluation with the final_holdout_test
+bias_user <- edx %>%
+  left_join(bias_movie, by = 'movieId') %>%
+  group_by(userId) %>%
+  summarize(s_usuario = mean(rating - mean_rating - s_movie),
+            s_usuario_isolated = mean(rating))
+
+# Show the first 20 rows of user biases
+head(bias_user, 20)
+
+# Construct the linear model (mean + bias of movie + bias of user)
+predicted_ratings_with2bias <- final_holdout_test %>%
+  left_join(bias_movie, by = 'movieId') %>%
+  left_join(bias_user, by = 'userId') %>%
+  mutate(prediction = mean_rating + s_movie + s_usuario)
+
+# Replace NA with the average value
+predicted_ratings_with2bias$prediction[is.na(predicted_ratings_with2bias$prediction)] <- mean_rating
+
+# Evaluate the model and store the results in a tibble
+valuation <- bind_rows(valuation,
+                      tibble(Models = "Model linear mean/s_movie/s_usuario (final_hold_out)",
+                      MAE = mae(final_holdout_test$rating, predicted_ratings_with2bias$prediction),
+                      MSE = mse(final_holdout_test$rating, predicted_ratings_with2bias$prediction),
+                      RMSE = rmse(final_holdout_test$rating, predicted_ratings_with2bias$prediction)))
+
+# Print the evaluations
+print(valuation)
+
+
+```
+
+```{r}
+#MODELING WITH REGULARIZATION
+
+#Regularization is a technique to improve the performance and generalizability of machine learning  
+#models by adding a penalty to the model's complexity. In recommender systems, regularization  
+#helps prevent overfitting by penalizing the complexity of user and item biases, leading to more  
+#accurate and robust recommendations.
+
+install.packages("ggthemes")
+install.packages("recosystem")
+install.packages("dplyr")
+install.packages("cowplot")
+install.packages("data.table")
+install.packages("Metrics")
+
+# Loading the required libraries
+library(ggthemes)
+library(recosystem)
+library(data.table)
+library(dplyr)
+library(cowplot)
+library(Metrics)
+
+#compute_biases: This function calculates the average rating, movie biases, and user biases
+#for a given dataset and lambda value.
+compute_biases <- function(training, lambda) {
+  avg_rating <- mean(training$rating)
+
+  movie_b <- training %>%
+    group_by(movieId) %>%
+    summarize(s_movie = sum(rating - avg_rating) / (n() + lambda), .groups = 'drop')
+
+  user_b <- training %>%
+    left_join(movie_b, by = "movieId") %>%
+    group_by(userId) %>%
+    summarize(s_usuario = sum(rating - avg_rating - s_movie) / (n() + lambda), .groups = 'drop')
+
+  return(list(movie_b = movie_b, user_b = user_b, avg_rating = avg_rating))
+}
+
+#This function predicts ratings based on the provided biases.
+predict_ratings <- function(validacion, biases) {
+  predictions <- validacion %>%
+    left_join(biases$movie_b, by = "movieId") %>%
+    left_join(biases$user_b, by = "userId") %>%
+    mutate(pred = biases$avg_rating + s_movie + s_usuario) %>%
+    pull(pred)
+  
+  predictions[is.na(predictions)] <- biases$avg_rating
+
+  return(predictions)
+}
+
+#This function evaluates the model by computing the biases, predicting ratings, 
+#and calculating the RMSE for a given lambda value.
+evaluate_model <- function(lambda, training, validacion) {
+  biases <- compute_biases(training, lambda)
+  predictions <- predict_ratings(validacion, biases)
+  rmse_value <- rmse(validacion$rating, predictions)
+  return(rmse_value)
+}
+
+# Ensure there are no missing values in the datasets
+print("Checking for missing values in training dataset:")
+print(sum(is.na(training)))
+
+print("Checking for missing values in validation dataset:")
+print(sum(is.na(validacion)))
+
+# Range of lambda values to test
+lambda_values <- seq(0, 15, 0.20)
+
+# Calculate RMSE for each lambda with debugging
+rmse_values <- sapply(lambda_values, evaluate_model, training = training, validacion = validacion)
+
+# Create a tibble to store lambda and RMSE values
+rmse_results <- tibble(Lambda = lambda_values, RMSE = rmse_values)
+print(rmse_results)
+
+# Select the best lambda
+best_lambda <- lambda_values[which.min(rmse_values)]
+print(best_lambda)
+
+# Compute biases with the best lambda
+final_biases <- compute_biases(training, best_lambda)
+
+# Predict ratings using the final biases
+final_predictions <- predict_ratings(validacion, final_biases)
+
+# Evaluate the model
+valuation <- tibble(
+  Models = "Linear model with regularized bias (validacion)",
+  MAE = mae(validacion$rating, final_predictions),
+  MSE = mse(validacion$rating, final_predictions),
+  RMSE = rmse(validacion$rating, final_predictions)
+)
+
+print(valuation)
+
+# EVALUATION WITH FINAL_HOLDOUT_TEST same procedure but with the edx set and final_holdout_test
+
+compute_biases <- function(edx, lambda) {
+  avg_rating <- mean(edx$rating)
+
+  movie_b <- edx %>%
+    group_by(movieId) %>%
+    summarize(s_movie = sum(rating - avg_rating) / (n() + lambda), .groups = 'drop')
+
+  user_b <- edx %>%
+    left_join(movie_b, by = "movieId") %>%
+    group_by(userId) %>%
+    summarize(s_usuario = sum(rating - avg_rating - s_movie) / (n() + lambda), .groups = 'drop')
+
+  return(list(movie_b = movie_b, user_b = user_b, avg_rating = avg_rating))
+}
+
+predict_ratings <- function(final_holdout_test, biases) {
+  predictions <- final_holdout_test %>%
+    left_join(biases$movie_b, by = "movieId") %>%
+    left_join(biases$user_b, by = "userId") %>%
+    mutate(pred = biases$avg_rating + s_movie + s_usuario) %>%
+    pull(pred)
+  
+  predictions[is.na(predictions)] <- biases$avg_rating
+
+  return(predictions)
+}
+
+evaluate_model <- function(lambda, edx, final_holdout_test) {
+  biases <- compute_biases(edx, lambda)
+  predictions <- predict_ratings(final_holdout_test, biases)
+  rmse_value <- rmse(final_holdout_test$rating, predictions)
+  return(rmse_value)
+}
+
+
+# Ensure there are no missing values in the datasets
+print("Checking for missing values in edx:")
+print(sum(is.na(edx)))
+
+print("Checking for missing values in final_holdout_test:")
+print(sum(is.na(final_holdout_test)))
+
+# Range of lambda values to test
+lambda_values <- seq(0, 15, 0.20)
+
+# Calculate RMSE for each lambda with debugging
+rmse_values <- sapply(lambda_values, evaluate_model, edx = edx, final_holdout_test = final_holdout_test)
+
+# Create a tibble to store lambda and RMSE values
+rmse_results <- tibble(Lambda = lambda_values, RMSE = rmse_values)
+print(rmse_results)
+
+# Select the best lambda
+best_lambda <- lambda_values[which.min(rmse_values)]
+print(best_lambda)
+
+# Compute biases with the best lambda
+final_biases <- compute_biases(edx, best_lambda)
+
+# Predict ratings using the final biases
+final_predictions <- predict_ratings(final_holdout_test, final_biases)
+
+# Evaluate the model
+valuation <- tibble(
+  Models = "Linear model with regularized bias (final_holdout_test)",
+  MAE = mae(final_holdout_test$rating, final_predictions),
+  MSE = mse(final_holdout_test$rating, final_predictions),
+  RMSE = rmse(final_holdout_test$rating, final_predictions)
+)
+
+print(valuation)
+
+
+```
+```{r}
+#MATRIX DE FACTORIZATION
+# Matrix factorization involves decomposing a large matrix into a product of two or more smaller 
+# matrices. In the context of recommender systems, this large matrix is typically the user-item 
+# interaction matrix, where each entry represents a user's rating for a particular item.
+
+# The training and validacion sets need to be converted into recosystem input format
+
+library(recosystem)
+library(dplyr)
+library(Metrics)
+
+set.seed(1)
+
+# Convert training and validacion sets into recosystem input format
+entrenamiento <- with(training, data_memory(user_index = userId, item_index = movieId, rating = rating))
+prueba <- with(validacion, data_memory(user_index = userId, item_index = movieId, rating = rating))
+
+# Create the model object
+create_model <- Reco()
+
+# Define tuning options
+tune_combination <- list(dim = c(10, 15, 20, 25), lrate = c(0.1, 0.2, 0.3), nthread = 4, niter = 10)
+
+# Tune the model
+best_tune <- create_model$tune(entrenamiento, opts = tune_combination)
+
+# Train the model with the best tuning parameters
+training_options <- c(best_tune$min, nthread = 4, niter = 20)
+create_model$train(entrenamiento, opts = training_options)
+
+# Make predictions
+predictions <- create_model$predict(prueba, out_memory())
+
+# Calculate evaluation metrics
+mae_value <- mae(validacion$rating, predictions)
+mse_value <- mse(validacion$rating, predictions)
+rmse_value <- rmse(validacion$rating, predictions)
+
+# Add the results to the evaluation tibble
+valuation <- valuation %>%
+  add_row(Models = "Matrix of factorization (validacion)",
+          MAE = mae_value,
+          MSE = mse_value,
+          RMSE = rmse_value)
+
+# Print the evaluation results
+print(valuation)
+
+
+#Final Evaluation with the final_holdout_test set 
+
+set.seed(1)
+
+# Convert training and validacion sets into recosystem input format
+entrenamiento <- with(edx, data_memory(user_index = userId, item_index = movieId, rating = rating))
+prueba <- with(final_holdout_test, data_memory(user_index = userId, item_index = movieId, rating = rating))
+
+# Create the model object
+create_model <- Reco()
+
+# Define tuning options
+tune_combination <- list(dim = c(10, 15, 20, 25), lrate = c(0.1, 0.2, 0.3), nthread = 4, niter = 10)
+
+# Tune the model
+best_tune <- create_model$tune(entrenamiento, opts = tune_combination)
+
+# Train the model with the best tuning parameters
+training_options <- c(best_tune$min, nthread = 4, niter = 20)
+create_model$train(entrenamiento, opts = training_options)
+
+# Make predictions
+predictions <- create_model$predict(prueba, out_memory())
+
+# Calculate evaluation metrics
+mae_value <- mae(final_holdout_test$rating, predictions)
+mse_value <- mse(final_holdout_test$rating, predictions)
+rmse_value <- rmse(final_holdout_test$rating, predictions)
+
+# Add the results to the evaluation tibble
+valuation <- valuation %>%
+  add_row(Models = "Matrix of factorization (final_holdout_test)",
+          MAE = mae_value,
+          MSE = mse_value,
+          RMSE = rmse_value)
+
+# Print the evaluation results
+print(valuation)
+
+```
+
+```{r}
+# Exploratory Data Analysis EDA
+# Ratings Distribution
+# The plot shows that most movie ratings are high, with 4 being the most frequent, followed by 3  
+# and 5.Lower ratings (1 and 2) are much less common, indicating that users generally rate movies positively.
+
+
+library(ggplot2)
+
+ggplot(edx, aes(x = rating)) +
+  geom_histogram(binwidth = 0.5, fill = "cyan", color = "magenta") +
+  ggtitle("Ratings Distribution") +
+  xlab("Calificación") +
+  ylab("Frecuencia")
+
+# Rating Average per genre 
+# The plot shows the average movie rating for different genres. Horror, Sci-Fi, and Children 
+# genres have the highest average ratings, indicating they are well-received by viewers. 
+# On the other hand, Film-Noir, Documentary, and War genres have the lowest average ratings,
+# suggesting they are less popular among the audience. Overall, the plot highlights significant
+# differences in viewer preferences across various movie genres.
+
+edx_genres <- edx %>%
+  separate_rows(genres, sep = "\\|")
+
+average_rating_per_genre <- edx_genres %>%
+  group_by(genres) %>%
+  summarize(avg_rating = mean(rating))
+
+ggplot(average_rating_per_genre, aes(x = reorder(genres, -avg_rating), y = avg_rating)) +
+  geom_bar(stat = "identity", fill = "purple") +
+  coord_flip() +
+  ggtitle("Rating average per genre ") +
+  xlab("Género") +
+  ylab("Calificación Promedio")
+
+# Rating per year 
+
+library(dplyr)
+library(stringr)
+
+# This plot highlights how the average ratings of movies have changed over time, showing that 
+# starting from the mid-1970s, there is a noticeable decline in average ratings, dropping
+# below 3.8 compared to earlier decades.
+
+# Extract the year from the movie titles
+edx <- edx %>%
+  mutate(year = str_extract(title, "\\(\\d{4}\\)")) %>%
+  mutate(year = as.numeric(str_replace_all(year, "[()]", "")))
+
+# Have a look if the years were extracted correctly
+head(edx)
+
+# Calculate the average rating per year
+average_rating_per_year <- edx %>%
+  group_by(year) %>%
+  summarize(avg_rating = mean(rating, na.rm = TRUE), count = n())
+
+# Check the results
+head(average_rating_per_year)
+
+library(ggplot2)
+
+# Create the plot of average rating per year
+ggplot(average_rating_per_year, aes(x = year, y = avg_rating)) +
+  geom_line(color = "steelblue") +
+  geom_point(color = "cyan") +
+  ggtitle("Average Rating per Year") +
+  xlab("Year") +
+  ylab("Average Rating") +
+  theme_minimal()
+
+
+```
+```{r}
+# Genre Distribution
+# Count the frequency of each genre
+# This plot highlights the distribution of movie genres in the dataset, showing which genres 
+# are most and least frequent based on user ratings.
+
+genre_count <- edx %>%
+  separate_rows(genres, sep = "\\|") %>%
+  group_by(genres) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count))
+
+# Create the bar chart
+ggplot(genre_count, aes(x = reorder(genres, -count), y = count)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +
+  ggtitle("Frequency of Each Genre") +
+  xlab("Genre") +
+  ylab("Frequency") +
+  theme_minimal()
+
+
+# Rating Distribution by Genre
+# The box plots provide a visual summary of the central tendency, dispersion, and skewness of the ratings 
+# for each genre. For example, genres like "IMAX" and "Film-Noir" show a wider range of ratings with
+# some outliers, indicating more variability in how these movies are rated. Genres like "Action" and 
+# "Comedy" have a more concentrated range of ratings with fewer outliers, indicating more consistent 
+# ratings within these genres.
+
+# The median rating for most genres appears to be around 3 to 4, showing that the central tendency of 
+# ratings is relatively high across genres.
+
+# Create a boxplot of rating distribution by genre
+ggplot(edx_genres, aes(x = genres, y = rating)) +
+  geom_boxplot(fill = "lightgreen") +
+  coord_flip() +
+  ggtitle("Rating Distribution by Genre") +
+  xlab("Genre") +
+  ylab("Rating") +
+  theme_minimal()
+
+# Average Rating per User
+# This plot highlights that users who rate many movies tend to give ratings that are generally
+# higher, clustering around the 3-4 range, indicating a tendency towards positive ratings.
+
+# Calculate the average rating per user
+average_rating_per_user <- edx %>%
+  group_by(userId) %>%
+  summarize(avg_rating = mean(rating), count = n()) %>%
+  arrange(desc(count)) %>%
+  filter(count > 100)  # Filter for users with more than 100 ratings
+
+# Create the bar chart
+ggplot(average_rating_per_user, aes(x = reorder(userId, -avg_rating), y = avg_rating)) +
+  geom_bar(stat = "identity", fill = "green") +
+  coord_flip() +
+  ggtitle("Average Rating per User (users with more than 100 ratings)") +
+  xlab("User") +
+  ylab("Average Rating") +
+  theme_minimal()
+
+# Number of Ratings per Year
+# This plot helps to understand the temporal distribution of movie ratings, showing which
+# periods have the highest and lowest number of ratings and providing insights into trends
+# in movie popularity over time.
+
+# Calculate the number of ratings per year
+ratings_per_year <- edx %>%
+  group_by(year) %>%
+  summarize(count = n())
+
+# Create the bar chart
+ggplot(ratings_per_year, aes(x = year, y = count)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  ggtitle("Number of Ratings per Year") +
+  xlab("Year") +
+  ylab("Number of Ratings") +
+  theme_minimal()
+
+
+
+```
+```{r}
+# EDA Eploratory Data Analysis 
+install.packages("skimr")
+library(skimr)
+
+# Summary of edx data
+summary(edx)
+
+
+# This skim(edx) provides a comprehensive overview of the edx dataset, including the distribution 
+# and completeness of the data across different variables. It highlights key statistics such as 
+# the mean, median, and percentiles, helping to understand the data's structure and characteristics.
+# Summary using skimr for more details
+skim(edx)
+
+# Distribution of ratings
+ratings_summary <- edx %>%
+  group_by(rating) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+print(ratings_summary)
+
+#  Number of ratings per movie:
+
+# Count ratings per movie
+ratings_per_movie <- edx %>%
+  group_by(movieId) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+# Summary statistics for ratings per movie
+ratings_per_movie_summary <- ratings_per_movie %>%
+  summarise(
+    min = min(count),
+    q1 = quantile(count, 0.25),
+    median = median(count),
+    mean = mean(count),
+    q3 = quantile(count, 0.75),
+    max = max(count)
+  )
+
+print(ratings_per_movie_summary)
+
+
+#  Number of ratings per user:
+
+# Count ratings per user
+ratings_per_user <- edx %>%
+  group_by(userId) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+# Summary statistics for ratings per user
+ratings_per_user_summary <- ratings_per_user %>%
+  summarise(
+    min = min(count),
+    q1 = quantile(count, 0.25),
+    median = median(count),
+    mean = mean(count),
+    q3 = quantile(count, 0.75),
+    max = max(count)
+  )
+
+print(ratings_per_user_summary)
+
+```
+```{r}
+
+# Average ratings by genre:
+
+
+# Separate genres into individual columns
+edx_genres <- edx %>% separate_rows(genres, sep = "\\|")
+
+# Average ratings by genre
+avg_ratings_genres <- edx_genres %>%
+  group_by(genres) %>%
+  summarise(avg_rating = mean(rating), count = n()) %>%
+  filter(count > 1000) %>%
+  arrange(desc(avg_rating)) # Filter genres with less than 1000 ratings and sort by average rating
+
+print(avg_ratings_genres)
+
+
+# Movie Popularity and Rating Analysis
+
+# Most rated movies
+most_rated_movies <- edx %>%
+  group_by(movieId, title) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  slice(1:10)
+
+print(most_rated_movies)
+
+# Least rated movies
+least_rated_movies <- edx %>%
+  group_by(movieId, title) %>%
+  summarise(count = n()) %>%
+  arrange(count) %>%
+  slice(1:10)
+
+print(least_rated_movies)
+
+
+# Average rating per movie
+average_rating_per_movie <- edx %>%
+  group_by(movieId, title) %>%
+  summarise(avg_rating = mean(rating), count = n()) %>%
+  arrange(desc(avg_rating))
+
+print(average_rating_per_movie)
+
+# Average rating per user
+average_rating_per_user <- edx %>%
+  group_by(userId) %>%
+  summarise(avg_rating = mean(rating), count = n()) %>%
+  arrange(desc(avg_rating))
+
+print(average_rating_per_user)
+
+# Number of movies and ratings per genre
+movies_per_genre <- edx_genres %>%
+  group_by(genres) %>%
+  summarise(num_movies = n_distinct(movieId), num_ratings = n()) %>%
+  arrange(desc(num_ratings))
+
+print(movies_per_genre)
+
+# Popularity and average rating by genre over time
+genre_trends <- edx_genres %>%
+  mutate(year = format(as.POSIXct(timestamp, origin = "1970-01-01"), "%Y")) %>%
+  group_by(genres, year) %>%
+  summarise(count = n(), avg_rating = mean(rating)) %>%
+  arrange(genres, year)
+
+print(genre_trends)
+
+# Trends in the number of ratings over time
+# Ratings per month
+ratings_per_month <- edx %>%
+  mutate(month = format(as.POSIXct(timestamp, origin = "1970-01-01"), "%Y-%m")) %>%
+  group_by(month) %>%
+  summarise(count = n()) %>%
+  arrange(month)
+
+print(ratings_per_month)
+
+# Check for missing values
+missing_values <- sapply(edx, function(x) sum(is.na(x)))
+
+print(missing_values)
+
+```
+
